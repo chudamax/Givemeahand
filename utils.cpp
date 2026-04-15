@@ -7,6 +7,8 @@
 
 using namespace std;
 
+#ifdef EXPLOIT_ENABLED
+
 DWORD CreatePrivProc(PHANDLE hPrivProc, LPWSTR commandLine) {
 	STARTUPINFOEX sinfo = { sizeof(sinfo) };
 	PROCESS_INFORMATION pinfo;
@@ -35,6 +37,8 @@ DWORD CreatePrivProc(PHANDLE hPrivProc, LPWSTR commandLine) {
 		return 0;
 	}
 }
+
+#endif // EXPLOIT_ENABLED
 
 BOOL CloneHandle(DWORD ownerPid, HANDLE handle, PHANDLE clonedHandle) {
 	HANDLE elevatedToken = NULL;
@@ -110,6 +114,8 @@ DWORD GetTargetIntegrityLevel(DWORD pid) {
 		return 0;
 	return GetTargetIntegrityLevel(hProc);
 }
+
+#ifdef EXPLOIT_ENABLED
 
 // ExploitDupHandle: given a handle to a SYSTEM process with PROCESS_DUP_HANDLE rights,
 // brute-forces the target's handle table to steal a privileged process handle,
@@ -289,6 +295,8 @@ DWORD ExploitThreadImpersonation(HANDLE hThread, LPWSTR commandLine) {
 	RevertToSelf();
 	return pid;
 }
+
+#endif // EXPLOIT_ENABLED
 
 wstring GetProcName(DWORD pid)
 {

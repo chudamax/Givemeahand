@@ -46,8 +46,13 @@ void PrintUsage()
 		"\thttp://dronesec.pw/blog/2019/08/22/exploiting-leaked-process-and-thread-handles/\n"
 		"\n"
 		"Example usage:\n"
+#ifdef EXPLOIT_ENABLED
 		"\t.\\Givemeahand --cmd \"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\PowerShell_ISE.exe\"\n"
-		"\t.\\Givemeahand --dll \"C:\\Users\\user\\payload.dll\"  (PROCESS_CREATE_THREAD path)\n";
+		"\t.\\Givemeahand --dll \"C:\\Users\\user\\payload.dll\"  (PROCESS_CREATE_THREAD path)\n"
+#else
+		"\t.\\Givemeahand  (detection only — rebuild with EXPLOIT_ENABLED for exploit paths)\n"
+#endif
+		;
 }
 
 void printHandleInfo(SYSTEM_HANDLE_TABLE_ENTRY_INFO& handle, const DWORD& integrityLevel)
@@ -137,6 +142,7 @@ int wmain(int argc, wchar_t* argv[], wchar_t* envp[])
 						{
 							vSysHandle.push_back(handle);
 							printHandleInfo(handle, integrityLevel);
+#ifdef EXPLOIT_ENABLED
 							if (handle.GrantedAccess & PROCESS_CREATE_PROCESS && args.count(L"--cmd")) {
 								HANDLE clHandle;
 								if (!CloneHandle(handle.UniqueProcessId, (HANDLE)handle.HandleValue, &clHandle)) {
@@ -191,6 +197,7 @@ int wmain(int argc, wchar_t* argv[], wchar_t* envp[])
 									}
 								}
 							}
+#endif // EXPLOIT_ENABLED
 						}
 					}
 					CloseHandle(clHandle);
@@ -231,6 +238,7 @@ int wmain(int argc, wchar_t* argv[], wchar_t* envp[])
 						{
 							vSysHandle.push_back(handle);
 							printHandleInfo(handle, integrityLevel);
+#ifdef EXPLOIT_ENABLED
 							if (args.count(L"--cmd")) {
 								if (handle.GrantedAccess & THREAD_DIRECT_IMPERSONATION ||
 									handle.GrantedAccess == THREAD_ALL_ACCESS) {
@@ -253,6 +261,7 @@ int wmain(int argc, wchar_t* argv[], wchar_t* envp[])
 									}
 								}
 							}
+#endif // EXPLOIT_ENABLED
 						}
 						CloseHandle(clHandle);
 					}
