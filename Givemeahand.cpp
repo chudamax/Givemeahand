@@ -6,7 +6,6 @@
 #include <winternl.h>
 #include <TlHelp32.h>
 #include <map>
-#include <resource.h>
 #include <vector>
 
 #include "support.h"
@@ -83,7 +82,7 @@ int wmain(int argc, wchar_t* argv[], wchar_t* envp[])
 
 	std::map<HANDLE, DWORD> mHandleId;
 
-	wil::unique_handle snapshot(CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS | TH32CS_SNAPTHREAD, 0));
+	HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS | TH32CS_SNAPTHREAD, 0);
 	PROCESSENTRY32W processEntry = { 0 };
 	THREADENTRY32 threadEntry = { 0 };
 	processEntry.dwSize = sizeof(PROCESSENTRY32W);
@@ -93,11 +92,12 @@ int wmain(int argc, wchar_t* argv[], wchar_t* envp[])
 	std::cout << "[*] Populating tid2pid map ..." << endl;
 	map<DWORD, DWORD> tid2pid = {};
 
-	auto status = Thread32First(snapshot.get(), &threadEntry);
+	auto status = Thread32First(snapshot, &threadEntry);
 	do
 	{
 		tid2pid[threadEntry.th32ThreadID] = threadEntry.th32OwnerProcessID;
-	} while (Thread32Next(snapshot.get(), &threadEntry));
+	} while (Thread32Next(snapshot, &threadEntry));
+	CloseHandle(snapshot);
 
 
 	std::cout << "[*] Populating handleInfo ..." << endl;
