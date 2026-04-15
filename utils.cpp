@@ -54,6 +54,24 @@ BOOL CloneHandle(DWORD ownerPid, HANDLE handle, PHANDLE clonedHandle) {
 	return result;
 }
 
+// GetTokenIntegrityLevel: query IL directly from a token handle.
+// Used for leaked token handles where we don't have (or need) a process handle.
+DWORD GetTokenIntegrityLevel(HANDLE hToken) {
+	DWORD retLen = 0;
+	GetTokenInformation(hToken, TokenIntegrityLevel, NULL, 0, &retLen);
+	if (retLen == 0) return 0;
+	PTOKEN_MANDATORY_LABEL tml = (PTOKEN_MANDATORY_LABEL)LocalAlloc(LPTR, retLen);
+	if (!tml) return 0;
+	if (!GetTokenInformation(hToken, TokenIntegrityLevel, tml, retLen, &retLen)) {
+		LocalFree(tml);
+		return 0;
+	}
+	DWORD il = *GetSidSubAuthority(tml->Label.Sid,
+		(DWORD)(UCHAR)(*GetSidSubAuthorityCount(tml->Label.Sid) - 1));
+	LocalFree(tml);
+	return il;
+}
+
 DWORD GetTargetIntegrityLevel(HANDLE hProc) {
 	HANDLE hToken;
 	if (!OpenProcessToken(hProc, TOKEN_QUERY, &hToken))

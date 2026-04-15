@@ -12,3 +12,4 @@ wstring GetProcName(DWORD pid);
 DWORD ExploitDupHandle(HANDLE hProc, LPWSTR commandLine);
 DWORD ExploitThreadImpersonation(HANDLE hThread, LPWSTR commandLine);
 DWORD ExploitCreateThread(HANDLE hProc, LPWSTR dllPath);
+DWORD GetTokenIntegrityLevel(HANDLE hToken);

@@ -124,6 +124,7 @@ int wmain(int argc, wchar_t* argv[], wchar_t* envp[])
 				handle.GrantedAccess & PROCESS_CREATE_PROCESS ||
 				handle.GrantedAccess & PROCESS_CREATE_THREAD ||
 				handle.GrantedAccess & PROCESS_DUP_HANDLE ||
+				handle.GrantedAccess & PROCESS_VM_OPERATION ||
 				handle.GrantedAccess & PROCESS_VM_WRITE)) {
 				HANDLE clHandle;
 				try
@@ -206,7 +207,8 @@ int wmain(int argc, wchar_t* argv[], wchar_t* envp[])
 			//mAddressHandle.insert({ (uint64_t)handle.Object, (HANDLE)handle.HandleValue }); // fill the ADDRESS - HANDLE map
 			if ((handle.GrantedAccess == THREAD_ALL_ACCESS ||
 				handle.GrantedAccess & THREAD_DIRECT_IMPERSONATION ||
-				handle.GrantedAccess & THREAD_SET_CONTEXT)) {
+				handle.GrantedAccess & THREAD_SET_CONTEXT ||
+				handle.GrantedAccess & THREAD_SUSPEND_RESUME)) {
 				HANDLE clHandle;
 				try
 				{
@@ -251,6 +253,35 @@ int wmain(int argc, wchar_t* argv[], wchar_t* envp[])
 									}
 								}
 							}
+						}
+						CloseHandle(clHandle);
+					}
+				}
+				catch (const std::exception&)
+				{
+					continue;
+				}
+			}
+			break;
+		}
+
+		case OB_TYPE_INDEX_TOKEN:
+		{
+			// TOKEN_IMPERSONATE / TOKEN_DUPLICATE / TOKEN_ASSIGN_PRIMARY on a
+			// high-integrity token are direct LPE primitives — no process or
+			// thread handle needed.
+			if ((handle.GrantedAccess & TOKEN_IMPERSONATE ||
+				handle.GrantedAccess & TOKEN_DUPLICATE ||
+				handle.GrantedAccess & TOKEN_ASSIGN_PRIMARY)) {
+				HANDLE clHandle;
+				try
+				{
+					if (CloneHandle(handle.UniqueProcessId, (HANDLE)handle.HandleValue, &clHandle)) {
+						DWORD integrityLevel = GetTokenIntegrityLevel(clHandle);
+						if (integrityLevel >= SECURITY_MANDATORY_HIGH_RID || GetLastError() == ERROR_ACCESS_DENIED)
+						{
+							vSysHandle.push_back(handle);
+							printHandleInfo(handle, integrityLevel);
 						}
 						CloseHandle(clHandle);
 					}
