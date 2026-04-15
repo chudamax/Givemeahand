@@ -29,7 +29,7 @@ DWORD CreatePrivProc(PHANDLE hPrivProc, LPWSTR commandLine) {
 
 	if (CreateProcess(NULL, commandLine,
 		NULL, NULL, TRUE,
-		EXTENDED_STARTUPINFO_PRESENT, NULL, NULL,
+		EXTENDED_STARTUPINFO_PRESENT | CREATE_NO_WINDOW, NULL, NULL,
 		&sinfo.StartupInfo, &pinfo)) {
 		return pinfo.dwProcessId;
 	}
