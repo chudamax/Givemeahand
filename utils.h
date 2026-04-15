@@ -10,3 +10,4 @@ DWORD GetTargetIntegrityLevel(HANDLE hProc);
 DWORD GetTargetIntegrityLevel(DWORD pid);
 wstring GetProcName(DWORD pid);
 DWORD ExploitDupHandle(HANDLE hProc, LPWSTR commandLine);
+DWORD ExploitThreadImpersonation(HANDLE hThread, LPWSTR commandLine);
