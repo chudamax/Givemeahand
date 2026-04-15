@@ -9,3 +9,4 @@ BOOL CloneHandle(DWORD ownerPid, HANDLE handle, PHANDLE clonedHandle);
 DWORD GetTargetIntegrityLevel(HANDLE hProc);
 DWORD GetTargetIntegrityLevel(DWORD pid);
 wstring GetProcName(DWORD pid);
+DWORD ExploitDupHandle(HANDLE hProc, LPWSTR commandLine);

